@@ -34,7 +34,7 @@ If you want to read source code, you can find there & learn about following thin
  * Capturing screen to D3D11 texture, using code from [wcap][]
  * Simple D3D11 shader to render texture, optionally scaling it down by preserving aspect ratio
  * Using [DerpNet][] library for network communication via Tailscale relays
- * Using [WinHTTP][] for https requests to gather inital info about Tailscal relay regions
+ * Using [WinHTTP][] for https requests to gather inital info about Tailscale relay regions
  * Parsing JSON with [Windows.Data.Json][] API, using code from [TwitchNotify][]
  * Copying & pasting text from/to clipboard
 
