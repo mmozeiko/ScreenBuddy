@@ -539,15 +539,38 @@ static bool Buddy_CreateEncoder(ScreenBuddy* Buddy, int EncodeWidth, int EncodeH
 	MFT_REGISTER_TYPE_INFO Input = { .guidMajorType = MFMediaType_Video, .guidSubtype = MFVideoFormat_NV12 };
 	MFT_REGISTER_TYPE_INFO Output = { .guidMajorType = MFMediaType_Video, .guidSubtype = MFVideoFormat_H264 };
 
+	DXGI_ADAPTER_DESC AdapterDesc;
+	{
+		IDXGIDevice* DxgiDevice;
+		HR(ID3D11Device_QueryInterface(Buddy->Device, &IID_IDXGIDevice, (void**)&DxgiDevice));
+
+		IDXGIAdapter* DxgiAdapter;
+		HR(IDXGIDevice_GetAdapter(DxgiDevice, &DxgiAdapter));
+
+		IDXGIAdapter_GetDesc(DxgiAdapter, &AdapterDesc);
+
+		IDXGIAdapter_Release(DxgiAdapter);
+		IDXGIDevice_Release(DxgiDevice);
+	}
+
+	IMFAttributes* EnumAttributes;
+	HR(MFCreateAttributes(&EnumAttributes, 1));
+	HR(IMFAttributes_SetBlob(EnumAttributes, &MFT_ENUM_ADAPTER_LUID, (UINT8*)&AdapterDesc.AdapterLuid, sizeof(AdapterDesc.AdapterLuid)));
+
 	IMFActivate** Activate;
 	UINT32 ActivateCount;
-	HR(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &Input, &Output, &Activate, &ActivateCount));
+	HR(MFTEnum2(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, &Input, &Output, EnumAttributes, &Activate, &ActivateCount));
+	IMFAttributes_Release(EnumAttributes);
 
 	if (ActivateCount == 0)
 	{
-		MessageBoxW(Buddy->DialogWindow, L"Cannot create GPU decoder!", L"Error", MB_ICONERROR);
+		MessageBoxW(Buddy->DialogWindow, L"Cannot create GPU encoder!", L"Error", MB_ICONERROR);
 		return false;
 	}
+
+	//wchar_t Name[256];
+	//HR(IMFActivate_GetString(Activate[0], &MFT_FRIENDLY_NAME_Attribute, Name, ARRAYSIZE(Name), NULL));
+	//OutputDebugStringW(Name);
 
 	IMFTransform* Encoder;
 	HR(IMFActivate_ActivateObject(Activate[0], &IID_IMFTransform, (void**)&Encoder));
@@ -759,7 +782,7 @@ static bool Buddy_CreateDecoder(ScreenBuddy* Buddy)
 
 	if (ActivateCount == 0)
 	{
-		MessageBoxW(Buddy->DialogWindow, L"Cannot create GPU encoder!", L"Error", MB_ICONERROR);
+		MessageBoxW(Buddy->DialogWindow, L"Cannot create GPU decoder!", L"Error", MB_ICONERROR);
 		return false;
 	}
 
