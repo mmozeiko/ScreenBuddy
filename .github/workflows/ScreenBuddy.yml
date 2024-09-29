@@ -1,0 +1,38 @@
+name: ScrenBuddy
+
+on:
+  push:
+    branches: main
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Build
+        shell: cmd
+        run: cd repo && build.cmd
+
+      - name: Checkout wiki
+        uses: actions/checkout@v4
+        if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+        with:
+          repository: ${{github.repository}}.wiki
+          path: wiki
+
+      - name: Upload binary
+        if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+        shell: cmd
+        run: |
+          copy repo\ScreenBuddy.exe wiki
+
+          cd wiki
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git commit --all --amend --no-edit --allow-empty-message
+          git push --force-with-lease
