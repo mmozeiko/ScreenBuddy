@@ -1,0 +1,9 @@
+.vs
+*.exe
+*.pdb
+*.res
+*.obj
+*.ilk
+*.ini
+*VS.h
+*PS.h
