@@ -38,6 +38,9 @@
 #include <evr.h>
 #include <pathcch.h>
 #include <strsafe.h>
+#include <shellapi.h>
+#include <commdlg.h>
+#include <shlwapi.h>
 
 #include "ScreenBuddyVS.h"
 #include "ScreenBuddyPS.h"
@@ -54,6 +57,7 @@
 #pragma comment (lib, "evr")
 #pragma comment (lib, "d3d11")
 #pragma comment (lib, "pathcch")
+#pragma comment (lib, "shlwapi")
 #pragma comment (lib, "OneCore")
 #pragma comment (lib, "CoreMessaging")
 
@@ -89,6 +93,7 @@ enum
 	// timer ids
 	BUDDY_DISCONNECT_TIMER		= 111,
 	BUDDY_UPDATE_TITLE_TIMER	= 222,
+	BUDDY_FILE_TIMER			= 333,
 
 	// dialog controls
 	BUDDY_ID_SHARE_ICON			= 100,
@@ -116,6 +121,10 @@ enum
 	BUDDY_PACKET_MOUSE_MOVE		= 2,
 	BUDDY_PACKET_MOUSE_BUTTON	= 3,
 	BUDDY_PACKET_MOUSE_WHEEL	= 4,
+	BUDDY_PACKET_FILE			= 5,
+	BUDDY_PACKET_FILE_ACCEPT	= 6,
+	BUDDY_PACKET_FILE_REJECT	= 7,
+	BUDDY_PACKET_FILE_DATA		= 8,
 };
 
 typedef enum
@@ -143,6 +152,14 @@ typedef struct
 	HICON Icon;
 	HWND MainWindow;
 	HWND DialogWindow;
+	HWND ProgressWindow;
+
+	// file transfer
+	HANDLE FileHandle;
+	uint64_t FileSize;
+	uint64_t FileProgress;
+	uint64_t FileLastTime;
+	uint64_t FileLastSize;
 
 	// derp stuff
 	HANDLE DerpRegionThread;
@@ -1510,6 +1527,12 @@ static void Buddy_Disconnect(ScreenBuddy* Buddy, const wchar_t* Message)
 		}
 		Buddy_StopDecoder(Buddy);
 
+		if (Buddy->ProgressWindow)
+		{
+			SendMessageW(Buddy->ProgressWindow, TDM_CLICK_BUTTON, IDCANCEL, 0);
+		}
+		DragAcceptFiles(Buddy->MainWindow, FALSE);
+
 		Buddy_ShowMessage(Buddy, Message);
 		Buddy_CancelWait(Buddy);
 		DerpNet_Close(&Buddy->Net);
@@ -1524,6 +1547,74 @@ static void Buddy_Disconnect(ScreenBuddy* Buddy, const wchar_t* Message)
 	}
 
 	Buddy_UpdateState(Buddy, BUDDY_STATE_DISCONNECTED);
+}
+
+static HRESULT CALLBACK Buddy_TaskCallback(HWND TaskWindow, UINT Message, WPARAM WParam, LPARAM LParam, LONG_PTR Data)
+{
+	ScreenBuddy* Buddy = (void*)Data;
+
+	switch (Message)
+	{
+	case TDN_CREATED:
+		Buddy->ProgressWindow = TaskWindow;
+		break;
+	}
+	return S_OK;
+}
+
+static void Buddy_SendFile(ScreenBuddy* Buddy, wchar_t* FileName)
+{
+	HANDLE FileHandle = CreateFileW(FileName, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+	if (FileHandle != INVALID_HANDLE_VALUE)
+	{
+		LARGE_INTEGER FileSize;
+		if (GetFileSizeEx(FileHandle, &FileSize) && FileSize.QuadPart)
+		{
+			Buddy->FileHandle = FileHandle;
+			Buddy->FileSize = FileSize.QuadPart;
+			Buddy->FileProgress = 0;
+			Buddy->FileLastTime = 0;
+			Buddy->FileLastSize = 0;
+			Buddy->ProgressWindow = NULL;
+
+			uint8_t Data[1 + 8 + 256];
+			Data[0] = BUDDY_PACKET_FILE;
+			CopyMemory(&Data[1], &FileSize, sizeof(FileSize));
+			size_t DataSize = 1 + 8 + WideCharToMultiByte(CP_UTF8, 0, FileName, -1, (char*)&Data[1 + 8], 256, NULL, NULL) - 1;
+
+			if (!DerpNet_Send(&Buddy->Net, &Buddy->RemoteKey, Data, DataSize))
+			{
+				Buddy_Disconnect(Buddy, L"DerpNet disconnect while sending filename!");
+			}
+			else
+			{
+				PathStripPathW(FileName);
+
+				TASKDIALOGCONFIG Config =
+				{
+					.cbSize = sizeof(Config),
+					.hwndParent = Buddy->MainWindow,
+					.dwFlags = TDF_USE_HICON_MAIN | TDF_ALLOW_DIALOG_CANCELLATION | TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CAN_BE_MINIMIZED | TDF_SIZE_TO_CONTENT,
+					.dwCommonButtons = TDCBF_CANCEL_BUTTON,
+					.pszWindowTitle = BUDDY_TITLE,
+					.hMainIcon = Buddy->Icon,
+					.pszMainInstruction = FileName,
+					.pszContent = L"Sending file...",
+					.nDefaultButton = IDCANCEL,
+					.pfCallback = &Buddy_TaskCallback,
+					.lpCallbackData = (LONG_PTR)Buddy,
+				};
+
+				TaskDialogIndirect(&Config, NULL, NULL, NULL);
+				KillTimer(Buddy->MainWindow, BUDDY_FILE_TIMER);
+
+				Buddy->ProgressWindow = NULL;
+				Buddy->FileHandle = NULL;
+			}
+		}
+
+		CloseHandle(FileHandle);
+	}
 }
 
 static LRESULT CALLBACK Buddy_WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
@@ -1570,7 +1661,73 @@ static LRESULT CALLBACK Buddy_WindowProc(HWND Window, UINT Message, WPARAM WPara
 			StrFormat(Title, L"%ls - %.f KB/s", BUDDY_TITLE, (double)BytesReceived / 1024.0);
 			SetWindowTextW(Window, Title);
 		}
+		else if (WParam == BUDDY_FILE_TIMER)
+		{
+			if (Buddy->ProgressWindow)
+			{
+				LARGE_INTEGER TimeNow;
+				QueryPerformanceCounter(&TimeNow);
+
+				uint8_t Buffer[1 + (8 << 10)];
+				DWORD Read = 0;
+				if (ReadFile(Buddy->FileHandle, Buffer + 1, sizeof(Buffer) - 1, &Read, NULL))
+				{
+					if (Read == 0)
+					{
+						SendMessageW(Buddy->ProgressWindow, TDM_CLICK_BUTTON, IDCANCEL, 0);
+					}
+					else
+					{
+						Buffer[0] = BUDDY_PACKET_FILE_DATA;
+						if (!DerpNet_Send(&Buddy->Net, &Buddy->RemoteKey, Buffer, 1 + Read))
+						{
+							Buddy_Disconnect(Buddy, L"DerpNet disconnect while sending file data!");
+						}
+						else
+						{
+							Buddy->FileProgress += Read;
+
+							if (Buddy->FileLastTime == 0)
+							{
+								Buddy->FileLastTime = TimeNow.QuadPart;
+							}
+							else if (TimeNow.QuadPart - Buddy->FileLastTime >= Buddy->Freq)
+							{
+								double Time = (double)(TimeNow.QuadPart - Buddy->FileLastTime) / Buddy->Freq;
+								double Speed = (Buddy->FileProgress - Buddy->FileLastSize) / Time;
+
+								wchar_t Text[1024];
+								StrFormat(Text, L"Sending file... %.2f KB (%.2f KB/s)", Buddy->FileProgress / 1024.0, Speed / 1024.0);
+
+								SendMessageW(Buddy->ProgressWindow, TDM_SET_ELEMENT_TEXT, TDE_CONTENT, (LPARAM)Text);
+								SendMessageW(Buddy->ProgressWindow, TDM_SET_PROGRESS_BAR_POS, Buddy->FileProgress * 100 / Buddy->FileSize, 0);
+
+								Buddy->FileLastTime = TimeNow.QuadPart;
+								Buddy->FileLastSize = Buddy->FileProgress;
+							}
+						}
+					}
+				}
+			}
+		}
 		return 0;
+
+	case WM_DROPFILES:
+	{
+		HDROP Drop = (HDROP)WParam;
+		wchar_t FileName[256];
+		if (DragQueryFileW(Drop, 0, FileName, ARRAYSIZE(FileName)))
+		{
+			if (Buddy->State == BUDDY_STATE_CONNECTED)
+			{
+				DragAcceptFiles(Buddy->MainWindow, FALSE);
+				Buddy_SendFile(Buddy, FileName);
+				DragAcceptFiles(Buddy->MainWindow, TRUE);
+			}
+		}
+		DragFinish(Drop);
+		return 0;
+	}
 
 	case WM_PAINT:
 		Buddy_RenderWindow(Buddy);
@@ -1595,6 +1752,11 @@ static LRESULT CALLBACK Buddy_WindowProc(HWND Window, UINT Message, WPARAM WPara
 
 			Buddy_CancelWait(Buddy);
 			DerpNet_Close(&Buddy->Net);
+
+			if (Buddy->ProgressWindow)
+			{
+				SendMessageW(Buddy->ProgressWindow, TDM_CLICK_BUTTON, IDCANCEL, 0);
+			}
 		}
 
 		Buddy_UpdateState(Buddy, BUDDY_STATE_DISCONNECTED);
@@ -1877,6 +2039,7 @@ static void Buddy_NetworkEvent(ScreenBuddy* Buddy)
 			{
 				KillTimer(Buddy->MainWindow, BUDDY_DISCONNECT_TIMER);
 				Buddy_UpdateState(Buddy, BUDDY_STATE_CONNECTED);
+				DragAcceptFiles(Buddy->MainWindow, TRUE);
 			}
 
 			if (RtlEqualMemory(&RecvKey, &Buddy->RemoteKey, sizeof(RecvKey)))
@@ -1929,6 +2092,22 @@ static void Buddy_NetworkEvent(ScreenBuddy* Buddy)
 				{
 					Buddy_Disconnect(Buddy, L"Remote computer stopped sharing!");
 					break;
+				}
+				else if (Packet == BUDDY_PACKET_FILE_ACCEPT)
+				{
+					if (Buddy->ProgressWindow)
+					{
+						SendMessageW(Buddy->ProgressWindow, TDM_SET_MARQUEE_PROGRESS_BAR, FALSE, 0);
+						SendMessageW(Buddy->ProgressWindow, TDM_SET_PROGRESS_BAR_POS, 0, 0);
+						SetTimer(Buddy->MainWindow, BUDDY_FILE_TIMER, 50, NULL);
+					}
+				}
+				else if (Packet == BUDDY_PACKET_FILE_REJECT)
+				{
+					if (Buddy->ProgressWindow)
+					{
+						SendMessageW(Buddy->ProgressWindow, TDM_CLICK_BUTTON, IDCANCEL, 0);
+					}
 				}
 			}
 		}
@@ -2020,6 +2199,109 @@ static void Buddy_NetworkEvent(ScreenBuddy* Buddy)
 							Input.mi.mouseData = Data.Button;
 							Input.mi.dwFlags |= (Data.IsDownOrHorizontalWheel ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL);
 							SendInput(1, &Input, sizeof(Input));
+						}
+					}
+				}
+				else if (Packet == BUDDY_PACKET_FILE)
+				{
+					wchar_t FileName[256];
+
+					if (Buddy->ProgressWindow == NULL)
+					{
+						Assert(RecvSize > 8);
+
+						uint64_t FileSize;
+						CopyMemory(&FileSize, RecvData, sizeof(FileSize));
+
+						int FileNameLen = MultiByteToWideChar(CP_UTF8, 0, RecvData + 8, RecvSize - sizeof(FileSize), FileName, ARRAYSIZE(FileName));
+						FileName[FileNameLen] = 0;
+
+						OPENFILENAMEW Dialog =
+						{
+							.lStructSize = sizeof(Dialog),
+							.hwndOwner = Buddy->DialogWindow,
+							.lpstrFile = FileName,
+							.nMaxFile = ARRAYSIZE(FileName),
+							.Flags = OFN_ENABLESIZING | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
+						};
+
+						if (GetSaveFileNameW(&Dialog))
+						{
+							HANDLE FileHandle = CreateFileW(FileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+							if (FileHandle == INVALID_HANDLE_VALUE)
+							{
+								MessageBoxW(Buddy->DialogWindow, L"Cannot create file!", BUDDY_TITLE, MB_ICONERROR);
+							}
+							else
+							{
+								Buddy->FileHandle = FileHandle;
+								Buddy->FileSize = FileSize;
+							}
+						}
+					}
+
+					if (Buddy->FileHandle)
+					{
+						PathStripPathW(FileName);
+
+						Buddy->FileProgress = 0;
+						Buddy->FileLastTime = 0;
+						Buddy->FileLastSize = 0;
+
+						uint8_t Data[1] = { BUDDY_PACKET_FILE_ACCEPT };
+						DerpNet_Send(&Buddy->Net, &Buddy->RemoteKey, Data, sizeof(Data));
+
+						TASKDIALOGCONFIG Config =
+						{
+							.cbSize = sizeof(Config),
+							.hwndParent = Buddy->DialogWindow,
+							.dwFlags = TDF_USE_HICON_MAIN | TDF_ALLOW_DIALOG_CANCELLATION | TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CAN_BE_MINIMIZED | TDF_SIZE_TO_CONTENT,
+							.dwCommonButtons = TDCBF_CANCEL_BUTTON,
+							.pszWindowTitle = BUDDY_TITLE,
+							.hMainIcon = Buddy->Icon,
+							.pszMainInstruction = FileName,
+							.pszContent = L"Receiving file...",
+							.nDefaultButton = IDCANCEL,
+							.pfCallback = &Buddy_TaskCallback,
+							.lpCallbackData = (LONG_PTR)Buddy,
+						};
+
+						Buddy_NextWait(Buddy);
+						SetTimer(Buddy->DialogWindow, BUDDY_FILE_TIMER, 50, NULL);
+						TaskDialogIndirect(&Config, NULL, NULL, NULL);
+						Buddy->ProgressWindow = NULL;
+
+						if (Buddy->FileHandle)
+						{
+							CloseHandle(Buddy->FileHandle);
+							Buddy->FileHandle = NULL;
+
+							DeleteFileW(FileName);
+						}
+					}
+					else
+					{
+						uint8_t Data[1] = { BUDDY_PACKET_FILE_REJECT };
+						DerpNet_Send(&Buddy->Net, &Buddy->RemoteKey, Data, sizeof(Data));
+					}
+				}
+				else if (Packet == BUDDY_PACKET_FILE_DATA)
+				{
+					if (Buddy->ProgressWindow)
+					{
+						DWORD Written = 0;
+						WriteFile(Buddy->FileHandle, RecvData, RecvSize, &Written, NULL);
+
+						Buddy->FileProgress += Written;
+						if (Buddy->FileProgress == Buddy->FileSize)
+						{
+							KillTimer(Buddy->DialogWindow, BUDDY_FILE_TIMER);
+
+							CloseHandle(Buddy->FileHandle);
+							Buddy->FileHandle = NULL;
+
+							SendMessageW(Buddy->ProgressWindow, TDM_CLICK_BUTTON, IDCANCEL, 0);
+							Buddy->ProgressWindow = NULL;
 						}
 					}
 				}
@@ -2141,6 +2423,38 @@ static INT_PTR CALLBACK Buddy_DialogProc(HWND Dialog, UINT Message, WPARAM WPara
 		}
 
 		ExitProcess(0);
+		return TRUE;
+
+	case WM_TIMER:
+		if (WParam == BUDDY_FILE_TIMER)
+		{
+			if (Buddy->ProgressWindow)
+			{
+				LARGE_INTEGER TimeNow;
+				QueryPerformanceCounter(&TimeNow);
+
+				if (Buddy->FileLastTime == 0)
+				{
+					Buddy->FileLastTime = TimeNow.QuadPart;
+					SendMessageW(Buddy->ProgressWindow, TDM_SET_MARQUEE_PROGRESS_BAR, FALSE, 0);
+					SendMessageW(Buddy->ProgressWindow, TDM_SET_PROGRESS_BAR_POS, 0, 0);
+				}
+				else if (TimeNow.QuadPart - Buddy->FileLastTime >= Buddy->Freq)
+				{
+					double Time = (double)(TimeNow.QuadPart - Buddy->FileLastTime) / Buddy->Freq;
+					double Speed = (Buddy->FileProgress - Buddy->FileLastSize) / Time;
+
+					wchar_t Text[1024];
+					StrFormat(Text, L"Receiving file... %.2f KB (%.2f KB/s)", Buddy->FileProgress / 1024.0, Speed / 1024.0);
+
+					SendMessageW(Buddy->ProgressWindow, TDM_SET_ELEMENT_TEXT, TDE_CONTENT, (LPARAM)Text);
+					SendMessageW(Buddy->ProgressWindow, TDM_SET_PROGRESS_BAR_POS, Buddy->FileProgress * 100 / Buddy->FileSize, 0);
+
+					Buddy->FileLastTime = TimeNow.QuadPart;
+					Buddy->FileLastSize = Buddy->FileProgress;
+				}
+			}
+		}
 		return TRUE;
 
 	case WM_COMMAND:

@@ -14,6 +14,7 @@ Features:
  * efficient - uses GPU accelerated video encoder & decoder for minimal CPU usage
  * lightweight - native code application, uses very small amount of memory
  * small - zero external dependencies, only default Windows libraries are used
+ * integrated file transfer - upload file to remote computer who shares the screen
 
 ![image](https://github.com/user-attachments/assets/1cd6ee61-b202-4d4e-9b54-4225ed025bd7)
 
@@ -37,6 +38,8 @@ If you want to read source code, you can find there & learn about following thin
  * Using [WinHTTP][] for https requests to gather inital info about Tailscale relay regions
  * Parsing JSON with [Windows.Data.Json][] API, using code from [TwitchNotify][]
  * Copying & pasting text from/to clipboard
+ * Simple progress dialog using Windows [TaskDialog][] common control
+ * Basic drag & drop to handle files dropped on window, using [DragAcceptFiles][] function
 
 TODOs
 =====
@@ -52,6 +55,8 @@ Missing features and/or future improvements:
  - [ ] More polished UI, allow choosing options - bitrate, framerate, which monitor to share, or share only single window
  - [ ] Clean up the code and comment how things work, currently it is a very rushed and hacky 1-day job
  - [ ] Performance & memory optimizations, in many places can preallocate API resources and skip various API calls
+ - [ ] File transfer to both directions
+ - [ ] Caputure, encode and send to remote view also the audio output
 
 License
 =======
@@ -70,3 +75,5 @@ a compiled binary, for any purpose, commercial or non-commercial, and by any mea
 [DerpNet]: https://github.com/mmozeiko/derpnet/
 [TwitchNotify]: https://github.com/mmozeiko/TwitchNotify/
 [VS]: https://visualstudio.microsoft.com/vs/
+[TaskDialog]: https://learn.microsoft.com/en-us/windows/win32/controls/task-dialogs-overview
+[DragAcceptFiles]: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragacceptfiles
