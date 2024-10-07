@@ -274,7 +274,7 @@ static DWORD CALLBACK Buddy_GetBestDerpRegionThread(LPVOID Arg)
 	uint8_t Buffer[64 * 1024];
 	size_t BufferSize = Buddy_DownloadDerpMap(Buddy->HttpSession, Buffer, sizeof(Buffer));
 
-	JsonObject* Json = JsonObject_Parse((char*)Buffer, (int)BufferSize);
+	JsonObject* Json = BufferSize ? JsonObject_Parse((char*)Buffer, (int)BufferSize) : NULL;
 	JsonObject* Regions = JsonObject_GetObject(Json, JsonCSTR("Regions"));
 	JsonIterator* Iterator = JsonObject_GetIterator(Regions);
 	if (Iterator)
@@ -2373,6 +2373,7 @@ static INT_PTR CALLBACK Buddy_DialogProc(HWND Dialog, UINT Message, WPARAM WPara
 
 			SetFocus(GetDlgItem(Dialog, BUDDY_ID_SHARE_COPY));
 
+			Buddy->DialogWindow = Dialog;
 			Buddy->DerpRegionThread = CreateThread(NULL, 0, &Buddy_GetBestDerpRegionThread, Buddy, 0, NULL);
 			Assert(Buddy->DerpRegionThread);
 		}
@@ -2485,18 +2486,28 @@ static INT_PTR CALLBACK Buddy_DialogProc(HWND Dialog, UINT Message, WPARAM WPara
 		}
 		else if (Control == BUDDY_ID_SHARE_NEW)
 		{
-			DerpNet_CreateNewKey(&Buddy->MyPrivateKey);
-			DerpNet_GetPublicKey(&Buddy->MyPrivateKey, &Buddy->MyPublicKey);
+			if (Buddy->DerpRegion == 0)
+			{
+				Edit_SetText(GetDlgItem(Dialog, BUDDY_ID_SHARE_KEY), L"...initializing...");
 
-			DATA_BLOB BlobInput = { sizeof(Buddy->MyPrivateKey), Buddy->MyPrivateKey.Bytes };
-			DATA_BLOB BlobOutput;
-			BOOL Protected = CryptProtectData(&BlobInput, NULL, NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &BlobOutput);
-			Assert(Protected);
+				Buddy->DerpRegionThread = CreateThread(NULL, 0, &Buddy_GetBestDerpRegionThread, Buddy, 0, NULL);
+				Assert(Buddy->DerpRegionThread);
+			}
+			else
+			{
+				DerpNet_CreateNewKey(&Buddy->MyPrivateKey);
+				DerpNet_GetPublicKey(&Buddy->MyPrivateKey, &Buddy->MyPublicKey);
 
-			WritePrivateProfileStructW(BUDDY_CONFIG, L"DerpPrivateKey", BlobOutput.pbData, BlobOutput.cbData, Buddy->ConfigPath);
-			LocalFree(BlobOutput.pbData);
+				DATA_BLOB BlobInput = { sizeof(Buddy->MyPrivateKey), Buddy->MyPrivateKey.Bytes };
+				DATA_BLOB BlobOutput;
+				BOOL Protected = CryptProtectData(&BlobInput, NULL, NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &BlobOutput);
+				Assert(Protected);
 
-			Dialog_ShowShareKey(GetDlgItem(Dialog, BUDDY_ID_SHARE_KEY), Buddy->DerpRegion, &Buddy->MyPublicKey);
+				WritePrivateProfileStructW(BUDDY_CONFIG, L"DerpPrivateKey", BlobOutput.pbData, BlobOutput.cbData, Buddy->ConfigPath);
+				LocalFree(BlobOutput.pbData);
+
+				Dialog_ShowShareKey(GetDlgItem(Dialog, BUDDY_ID_SHARE_KEY), Buddy->DerpRegion, &Buddy->MyPublicKey);
+			}
 		}
 		else if (Control == BUDDY_ID_CONNECT_PASTE)
 		{
@@ -2561,15 +2572,16 @@ static INT_PTR CALLBACK Buddy_DialogProc(HWND Dialog, UINT Message, WPARAM WPara
 
 	case BUDDY_WM_BEST_REGION:
 	{
-		if (WParam == 0)
-		{
-			MessageBoxW(Buddy->DialogWindow, L"Cannot determine best DERP region!", L"Error", MB_ICONERROR);
-			ExitProcess(0);
-		}
-
-		Buddy->DerpRegion = (uint32_t)WParam;
 		WaitForSingleObject(Buddy->DerpRegionThread, INFINITE);
 		CloseHandle(Buddy->DerpRegionThread);
+
+		if (WParam == 0)
+		{
+			Edit_SetText(GetDlgItem(Dialog, BUDDY_ID_SHARE_KEY), L"Error!");
+			MessageBoxW(Buddy->DialogWindow, L"Cannot determine best DERP region! Please check your\ninternet connection and retry new code generation.", BUDDY_TITLE, MB_ICONERROR);
+			return 0;
+		}
+		Buddy->DerpRegion = (uint32_t)WParam;
 
 		wchar_t DerpRegionText[128];
 		StrFormat(DerpRegionText, L"%u", Buddy->DerpRegion);

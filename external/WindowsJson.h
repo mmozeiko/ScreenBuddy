@@ -157,7 +157,7 @@ JsonIterator* JsonObject_GetIterator(JsonObject* Object)
 	__FIIterator_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue* Iterator = NULL;
 
 	__FIIterable_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue* Iterable;
-	if (SUCCEEDED(__x_ABI_CWindows_CData_CJson_CIJsonObject_QueryInterface(Object, &IID_IMap_IJsonValue, (void**)&Iterable)))
+	if (Object && SUCCEEDED(__x_ABI_CWindows_CData_CJson_CIJsonObject_QueryInterface(Object, &IID_IMap_IJsonValue, (void**)&Iterable)))
 	{
 		HR(__FIIterable_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_First(Iterable, &Iterator));
 
@@ -180,7 +180,7 @@ HSTRING JsonIterator_GetKey(JsonIterator* Iterator)
 	HSTRING Result = NULL;
 
 	__FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue* Current;
-	if (SUCCEEDED(__FIIterator_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_get_Current(Iterator, &Current)))
+	if (Iterator && SUCCEEDED(__FIIterator_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_get_Current(Iterator, &Current)))
 	{
 		HR(__FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_get_Key(Current, &Result));
 		__FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_Release(Current);
@@ -194,7 +194,7 @@ JsonObject* JsonIterator_GetValue(JsonIterator* Iterator)
 	JsonObject* Result = NULL;
 
 	__FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue* Current;
-	if (SUCCEEDED(__FIIterator_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_get_Current(Iterator, &Current)))
+	if (Iterator && SUCCEEDED(__FIIterator_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_get_Current(Iterator, &Current)))
 	{
 		__x_ABI_CWindows_CData_CJson_CIJsonValue* Value;
 		HR(__FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_get_Value(Current, &Value));
@@ -210,7 +210,7 @@ JsonObject* JsonIterator_GetValue(JsonIterator* Iterator)
 bool JsonIterator_Next(JsonIterator* Iterator)
 {
 	boolean Result;
-	if (FAILED(__FIIterator_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_MoveNext(Iterator, &Result)))
+	if (Iterator && FAILED(__FIIterator_1___FIKeyValuePair_2_HSTRING_Windows__CData__CJson__CIJsonValue_MoveNext(Iterator, &Result)))
 	{
 		Result = 0;
 	}
