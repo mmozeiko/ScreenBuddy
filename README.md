@@ -40,6 +40,7 @@ If you want to read source code, you can find there & learn about following thin
  * Copying & pasting text from/to clipboard
  * Simple progress dialog using Windows [TaskDialog][] common control
  * Basic drag & drop to handle files dropped on window, using [DragAcceptFiles][] function
+ * Retrieving Windows registered file icon using [SHGetFileInfo][] function
 
 TODOs
 =====
@@ -77,3 +78,4 @@ a compiled binary, for any purpose, commercial or non-commercial, and by any mea
 [VS]: https://visualstudio.microsoft.com/vs/
 [TaskDialog]: https://learn.microsoft.com/en-us/windows/win32/controls/task-dialogs-overview
 [DragAcceptFiles]: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragacceptfiles
+[SHGetFileInfo]: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shgetfileinfow

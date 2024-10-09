@@ -1557,6 +1557,7 @@ static HRESULT CALLBACK Buddy_TaskCallback(HWND TaskWindow, UINT Message, WPARAM
 	{
 	case TDN_CREATED:
 		Buddy->ProgressWindow = TaskWindow;
+		SendMessageW(TaskWindow, TDM_SET_PROGRESS_BAR_MARQUEE, TRUE, 0);
 		break;
 	}
 	return S_OK;
@@ -1588,6 +1589,9 @@ static void Buddy_SendFile(ScreenBuddy* Buddy, wchar_t* FileName)
 			}
 			else
 			{
+				SHFILEINFOW FileInfo;
+				DWORD_PTR IconOk = SHGetFileInfoW(FileName, 0, &FileInfo, sizeof(FileInfo), SHGFI_ICON | SHGFI_USEFILEATTRIBUTES);
+
 				PathStripPathW(FileName);
 
 				TASKDIALOGCONFIG Config =
@@ -1597,7 +1601,7 @@ static void Buddy_SendFile(ScreenBuddy* Buddy, wchar_t* FileName)
 					.dwFlags = TDF_USE_HICON_MAIN | TDF_ALLOW_DIALOG_CANCELLATION | TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CAN_BE_MINIMIZED | TDF_SIZE_TO_CONTENT,
 					.dwCommonButtons = TDCBF_CANCEL_BUTTON,
 					.pszWindowTitle = BUDDY_TITLE,
-					.hMainIcon = Buddy->Icon,
+					.hMainIcon = IconOk ? FileInfo.hIcon : Buddy->Icon,
 					.pszMainInstruction = FileName,
 					.pszContent = L"Sending file...",
 					.nDefaultButton = IDCANCEL,
@@ -1610,6 +1614,11 @@ static void Buddy_SendFile(ScreenBuddy* Buddy, wchar_t* FileName)
 
 				Buddy->ProgressWindow = NULL;
 				Buddy->FileHandle = NULL;
+
+				if (IconOk)
+				{
+					DestroyIcon(FileInfo.hIcon);
+				}
 			}
 		}
 
@@ -2242,6 +2251,9 @@ static void Buddy_NetworkEvent(ScreenBuddy* Buddy)
 
 					if (Buddy->FileHandle)
 					{
+						SHFILEINFOW FileInfo;
+						DWORD_PTR IconOk = SHGetFileInfoW(FileName, 0, &FileInfo, sizeof(FileInfo), SHGFI_ICON | SHGFI_USEFILEATTRIBUTES);
+
 						PathStripPathW(FileName);
 
 						Buddy->FileProgress = 0;
@@ -2258,7 +2270,7 @@ static void Buddy_NetworkEvent(ScreenBuddy* Buddy)
 							.dwFlags = TDF_USE_HICON_MAIN | TDF_ALLOW_DIALOG_CANCELLATION | TDF_SHOW_MARQUEE_PROGRESS_BAR | TDF_CAN_BE_MINIMIZED | TDF_SIZE_TO_CONTENT,
 							.dwCommonButtons = TDCBF_CANCEL_BUTTON,
 							.pszWindowTitle = BUDDY_TITLE,
-							.hMainIcon = Buddy->Icon,
+							.hMainIcon = IconOk ? FileInfo.hIcon : Buddy->Icon,
 							.pszMainInstruction = FileName,
 							.pszContent = L"Receiving file...",
 							.nDefaultButton = IDCANCEL,
@@ -2270,6 +2282,11 @@ static void Buddy_NetworkEvent(ScreenBuddy* Buddy)
 						SetTimer(Buddy->DialogWindow, BUDDY_FILE_TIMER, 50, NULL);
 						TaskDialogIndirect(&Config, NULL, NULL, NULL);
 						Buddy->ProgressWindow = NULL;
+
+						if (IconOk)
+						{
+							DestroyIcon(FileInfo.hIcon);
+						}
 
 						if (Buddy->FileHandle)
 						{
